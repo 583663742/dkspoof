@@ -1,50 +1,23 @@
-// DKSpoof - DingTalk 虚拟定位
-// 纯 hook 版：读 App Group 共享配置，伪造 CLLocationManager 定位
-// 参考 FakeTools 机制（CLLocationManager hook + NSUserDefaults initWithSuiteName）
+// DKSpoof - DingTalk 虚拟定位（写死坐标版 / 测试用）
+// 默认开启 + 坐标写死：贵州省遵义市中级人民法院
+// 注入钉钉后立即生效，无需配置
 
 #import <CoreLocation/CoreLocation.h>
 #import <Foundation/Foundation.h>
 
-// ============ 共享配置读取（App Group） ============
-static NSString * const kSpoofSuiteName = @"group.dkspoof.config";
-static NSString * const kKeyEnabled      = @"LocationSpoofingEnabled";
-static NSString * const kKeyLat          = @"SpoofLatitude";
-static NSString * const kKeyLon          = @"SpoofLongitude";
-static NSString * const kKeyAltEnabled   = @"AltitudeSpoofingEnabled";
-static NSString * const kKeyAlt          = @"SpoofAltitude";
+// ============ 写死的目标坐标（WGS-84，iOS GPS 坐标系）============
+static const double kTargetLat = 27.758693;   // 贵州省遵义市中级人民法院
+static const double kTargetLon = 106.927534;
+static const double kTargetAlt = 850.0;        // 遵义海拔约 850m
+static const BOOL   kSpoofOn   = YES;          // 总开关
 
-static NSUserDefaults *DKDefaults(void) {
-    static NSUserDefaults *d = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        d = [[NSUserDefaults alloc] initWithSuiteName:kSpoofSuiteName];
-    });
-    return d;
-}
-
-static BOOL DKSpoofEnabled(void) {
-    return [DKDefaults() boolForKey:kKeyEnabled];
-}
-
-static BOOL DKSpoofCoordinate(CLLocationCoordinate2D *outCoord) {
-    NSUserDefaults *d = DKDefaults();
-    double lat = [d doubleForKey:kKeyLat];
-    double lon = [d doubleForKey:kKeyLon];
-    if (lat == 0.0 && lon == 0.0) return NO;
-    CLLocationCoordinate2D c = CLLocationCoordinate2DMake(lat, lon);
-    if (!CLLocationCoordinate2DIsValid(c)) return NO;
-    if (outCoord) *outCoord = c;
-    return YES;
-}
-
+// ============ 构造伪造定位 ============
 static CLLocation *DKFakeLocation(void) {
-    CLLocationCoordinate2D coord;
-    if (!DKSpoofCoordinate(&coord)) return nil;
-    NSUserDefaults *d = DKDefaults();
-    BOOL altEnabled = [d boolForKey:kKeyAltEnabled];
-    double alt = altEnabled ? [d doubleForKey:kKeyAlt] : 0.0;
+    if (!kSpoofOn) return nil;
+    CLLocationCoordinate2D coord = CLLocationCoordinate2DMake(kTargetLat, kTargetLon);
+    if (!CLLocationCoordinate2DIsValid(coord)) return nil;
     return [[CLLocation alloc] initWithCoordinate:coord
-                                        altitude:alt
+                                        altitude:kTargetAlt
                               horizontalAccuracy:5.0
                                 verticalAccuracy:5.0
                                           course:0.0
@@ -52,7 +25,7 @@ static CLLocation *DKFakeLocation(void) {
                                        timestamp:[NSDate date]];
 }
 
-// 统一的伪造回调派发
+// 统一派发伪造定位回调
 static void DKDeliverFakeLocation(CLLocationManager *mgr) {
     CLLocation *fake = DKFakeLocation();
     if (!fake) return;
@@ -66,17 +39,15 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
 %hook CLLocationManager
 
 - (CLLocation *)location {
-    if (DKSpoofEnabled()) {
-        CLLocation *fake = DKFakeLocation();
-        if (fake) {
-            return fake;
-        }
+    CLLocation *fake = DKFakeLocation();
+    if (fake) {
+        return fake;
     }
     return %orig;
 }
 
 - (void)startUpdatingLocation {
-    if (DKSpoofEnabled() && DKFakeLocation()) {
+    if (DKFakeLocation()) {
         DKDeliverFakeLocation(self);
         return;
     }
@@ -84,7 +55,7 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
 }
 
 - (void)requestLocation {
-    if (DKSpoofEnabled() && DKFakeLocation()) {
+    if (DKFakeLocation()) {
         DKDeliverFakeLocation(self);
         return;
     }
@@ -92,7 +63,7 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
 }
 
 - (void)startMonitoringSignificantLocationChanges {
-    if (DKSpoofEnabled() && DKFakeLocation()) {
+    if (DKFakeLocation()) {
         DKDeliverFakeLocation(self);
         return;
     }
@@ -105,11 +76,8 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
 %hook CLLocation
 
 - (CLLocationCoordinate2D)coordinate {
-    if (DKSpoofEnabled()) {
-        CLLocationCoordinate2D coord = {0, 0};
-        if (DKSpoofCoordinate(&coord)) {
-            return coord;
-        }
+    if (kSpoofOn) {
+        return CLLocationCoordinate2DMake(kTargetLat, kTargetLon);
     }
     return %orig;
 }
