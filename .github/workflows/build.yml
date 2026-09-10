@@ -1,0 +1,60 @@
+# DKSpoof macOS 原生构建（标准 substrate，兼容 TrollFools 注入）
+name: Build DKSpoof
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      THEOS: ${{ github.workspace }}/theos
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install theos (standard branch for substrate)
+        run: |
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+
+      - name: Install iOS 16.5 SDK
+        run: |
+          mkdir -p "$THEOS/sdks"
+          curl -L -o "$THEOS/sdks/iPhoneOS16.5.sdk.tar.xz" \
+            "https://raw.githubusercontent.com/583663742/qqfloatball-build-pub/main/sdk/iPhoneOS16.5.sdk.tar.xz"
+          tar -xJf "$THEOS/sdks/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
+
+      - name: Install ldid (needed for arm64e signing)
+        run: |
+          brew install ldid || brew install --build-from-source ldid || (mkdir -p "$THEOS/bin" && curl -L -o "$THEOS/bin/ldid" https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_macosx_arm64 && chmod +x "$THEOS/bin/ldid" && echo "$THEOS/bin" >> $GITHUB_PATH)
+
+      - name: Verify Makefile (Apple ld64 default, no -fuse-ld=lld)
+        run: |
+          grep -n "LDFLAGS" Makefile || true
+          grep -n "ARCHS" Makefile || true
+
+      - name: Build package
+        run: |
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: List artifacts
+        run: |
+          ls -la packages/ || true
+          find . -name "*.deb" -not -path "./layout/*" | head -5
+
+      - name: Upload deb + dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: dkspoof-build
+          path: |
+            packages/*.deb
+            .theos/obj/debug/*.dylib
+            .theos/obj/debug/arm64/*.dylib
+            .theos/obj/debug/arm64e/*.dylib
+            .theos/obj/*.dylib
+            .theos/obj/arm64/*.dylib
+            .theos/obj/arm64e/*.dylib
+          if-no-files-found: warn
