@@ -108,9 +108,8 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
 }
 %end
 
-// ============ 三指双击手势安装（由 SpoofPanel.mm 实现）============
+// ============ 三指双击手势安装 ============
 extern void DKSetupGestureOnWindow(UIWindow *window);
-extern void DKShowPanel(void);
 
 %hook UIWindow
 - (void)makeKeyAndVisible {
@@ -119,21 +118,21 @@ extern void DKShowPanel(void);
 }
 %end
 
-%hook UIViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    UIWindow *kw = nil;
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-                    if (w.isKeyWindow) { kw = w; break; }
+// dylib 加载后延迟安装（兜底：对已存在的 keyWindow）
+%ctor {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *key = nil;
+        if (@available(iOS 13.0, *)) {
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                        if (w.isKeyWindow) { key = w; break; }
+                    }
                 }
+                if (key) break;
             }
-            if (kw) break;
         }
-    }
-    if (!kw) kw = [UIApplication sharedApplication].keyWindow;
-    if (kw) DKSetupGestureOnWindow(kw);
+        if (!key) key = [UIApplication sharedApplication].keyWindow;
+        if (key) DKSetupGestureOnWindow(key);
+    });
 }
-%end
