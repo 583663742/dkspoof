@@ -1,10 +1,10 @@
-// DKSpoof v2 - UI 实现（三指双击唤出 + 地图选点面板）
-// 功能：地图选点 / 搜索地点 / 保存常用 / 历史记录 / 确认修改 / 恢复修改
+// DKSpoof v2 - 位置模拟面板（严格照 FakeTools 结构复刻）
+// 结构：搜索框 + [历史记录][输入位置][输入海拔] + 地图 + 坐标浮层 + 两个开关 + 确认位置
+// 唤出：三指双击
 
 #import <UIKit/UIKit.h>
 #import <MapKit/MapKit.h>
 #import <CoreLocation/CoreLocation.h>
-#import <objc/runtime.h>
 
 extern NSUserDefaults *DKDefaults(void);
 extern BOOL DKSpoofEnabled(void);
@@ -25,7 +25,6 @@ static NSString * const kKeyHistory = @"LocationHistory";
 @property (nonatomic, assign) double lat;
 @property (nonatomic, assign) double lon;
 @end
-
 @implementation DKPlace
 - (NSDictionary *)dict { return @{@"name": self.name ?: @"", @"lat": @(self.lat), @"lon": @(self.lon)}; }
 + (instancetype)fromDict:(NSDictionary *)d {
@@ -37,8 +36,6 @@ static NSString * const kKeyHistory = @"LocationHistory";
 }
 @end
 
-#pragma mark - 工具
-
 static NSArray<DKPlace *> *DKLoadPlaces(NSString *key) {
     NSArray *arr = [DKDefaults() arrayForKey:key];
     NSMutableArray *out = [NSMutableArray array];
@@ -47,7 +44,6 @@ static NSArray<DKPlace *> *DKLoadPlaces(NSString *key) {
     }
     return out;
 }
-
 static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     NSMutableArray *arr = [NSMutableArray array];
     for (DKPlace *p in DKLoadPlaces(key)) [arr addObject:[p dict]];
@@ -57,101 +53,232 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [DKDefaults() synchronize];
 }
 
-static void DKApplyCoordinate(double lat, double lon, NSString *name) {
-    NSUserDefaults *d = DKDefaults();
-    [d setDouble:lat forKey:kKeyLat];
-    [d setDouble:lon forKey:kKeyLon];
-    [d setBool:YES forKey:kKeyEnabled];
-    [d synchronize];
-    if (name.length) {
-        DKPlace *p = [DKPlace new];
-        p.name = name; p.lat = lat; p.lon = lon;
-        DKSavePlaceTo(kKeyHistory, p);
-    }
+#pragma mark - 位置历史
+
+@interface DKHistoryVC : UITableViewController
+@property (nonatomic, strong) NSArray<DKPlace *> *items;
+@property (nonatomic, copy) void (^onPick)(DKPlace *p);
+@end
+@implementation DKHistoryVC
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"位置历史";
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(closeTapped)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash target:self action:@selector(clearTapped)];
+    self.items = DKLoadPlaces(kKeyHistory);
 }
-
-#pragma mark - 地图选点控制器
-
-@interface DKMapPickerVC : UIViewController <MKMapViewDelegate, UISearchBarDelegate>
-@property (nonatomic, strong) MKMapView *mapView;
-@property (nonatomic, strong) UISearchBar *searchBar;
-@property (nonatomic, strong) UILabel *coordLabel;
-@property (nonatomic, assign) CLLocationCoordinate2D picked;
-@property (nonatomic, assign) BOOL hasPicked;
-@property (nonatomic, copy) void (^onDone)(double lat, double lon, NSString *name);
+- (void)closeTapped { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)clearTapped {
+    [DKDefaults() setObject:@[] forKey:kKeyHistory];
+    [DKDefaults() synchronize];
+    self.items = @[];
+    [self.tableView reloadData];
+}
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"h"];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"h"];
+    DKPlace *p = self.items[ip.row];
+    c.textLabel.text = p.name.length ? p.name : [NSString stringWithFormat:@"%.6f, %.6f", p.lat, p.lon];
+    c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return c;
+}
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (self.onPick) self.onPick(self.items[ip.row]);
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
 @end
 
-@implementation DKMapPickerVC
+#pragma mark - 主面板
+
+@interface DKPanelVC : UIViewController <MKMapViewDelegate, UISearchBarDelegate>
+@property (nonatomic, strong) UISearchBar *searchBar;
+@property (nonatomic, strong) MKMapView *mapView;
+@property (nonatomic, strong) UIView *infoCard;
+@property (nonatomic, strong) UILabel *coordLabel;
+@property (nonatomic, strong) UISwitch *locationSwitch;
+@property (nonatomic, strong) UISwitch *altitudeSwitch;
+@property (nonatomic, strong) MKPointAnnotation *pin;
+@property (nonatomic, assign) CLLocationCoordinate2D picked;
+@property (nonatomic, assign) BOOL hasPicked;
+@end
+
+@implementation DKPanelVC
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
-    self.title = @"地图选点";
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"确认修改"
-        style:UIBarButtonItemStyleDone target:self action:@selector(confirmTapped)];
+    CGFloat W = self.view.bounds.size.width;
+    CGFloat H = self.view.bounds.size.height;
 
-    // 搜索栏
-    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 50)];
+    // ---- 顶部标题栏 ----
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, W, 56)];
+    title.text = @"位置模拟";
+    title.font = [UIFont boldSystemFontOfSize:18];
+    title.textAlignment = NSTextAlignmentCenter;
+    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:title];
+
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(W - 52, 12, 40, 32);
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    close.titleLabel.font = [UIFont systemFontOfSize:22];
+    [close addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.view addSubview:close];
+
+    // ---- 搜索框 ----
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 56, W, 50)];
     self.searchBar.delegate = self;
-    self.searchBar.placeholder = @"搜索地点";
+    self.searchBar.placeholder = @"搜索地址或地点";
+    self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
     self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.searchBar];
 
-    // 地图
-    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(0, 50, self.view.bounds.size.width, self.view.bounds.size.height - 50)];
+    // ---- 三个按钮：历史记录 | 输入位置 | 输入海拔 ----
+    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"历史记录", @"输入位置", @"输入海拔"]];
+    seg.frame = CGRectMake(20, 112, W - 40, 36);
+    seg.selectedSegmentIndex = -1;
+    [seg addTarget:self action:@selector(segChanged:) forControlEvents:UIControlEventValueChanged];
+    seg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:seg];
+
+    // ---- 地图 ----
+    CGFloat mapTop = 160;
+    CGFloat mapBottomMargin = 140;
+    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(12, mapTop, W - 24, H - mapTop - mapBottomMargin)];
     self.mapView.delegate = self;
+    self.mapView.layer.cornerRadius = 12;
+    self.mapView.clipsToBounds = YES;
     self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.mapView];
 
-    // 长按选点
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mapLongPressed:)];
-    lp.minimumPressDuration = 0.4;
+    lp.minimumPressDuration = 0.35;
     [self.mapView addGestureRecognizer:lp];
 
-    // 坐标标签
-    self.coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, self.view.bounds.size.height - 90, self.view.bounds.size.width - 20, 60)];
+    // ---- 坐标浮层（地图左上）----
+    self.infoCard = [[UIView alloc] initWithFrame:CGRectMake(24, mapTop + 12, 200, 60)];
+    self.infoCard.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.92];
+    self.infoCard.layer.cornerRadius = 8;
+    [self.view addSubview:self.infoCard];
+    self.coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, 180, 48)];
     self.coordLabel.numberOfLines = 2;
     self.coordLabel.font = [UIFont systemFontOfSize:13];
-    self.coordLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.6];
-    self.coordLabel.textColor = [UIColor whiteColor];
-    self.coordLabel.layer.cornerRadius = 8;
-    self.coordLabel.clipsToBounds = YES;
-    self.coordLabel.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
-    self.coordLabel.text = @"长按地图选择位置，或搜索地点";
-    [self.view addSubview:self.coordLabel];
+    self.coordLabel.textColor = [UIColor blackColor];
+    [self.infoCard addSubview:self.coordLabel];
 
-    // 初始定位到当前伪造点或默认
-    CLLocationCoordinate2D init = CLLocationCoordinate2DMake(27.758693, 106.927534);
-    DKSpoofCoordinate(&init);
-    [self.mapView setRegion:MKCoordinateRegionMakeWithDistance(init, 2000, 2000) animated:NO];
+    // ---- 两个开关：位置模拟 | 海拔模拟 ----
+    CGFloat swY = H - 118;
+    UILabel *locIcon = [[UILabel alloc] initWithFrame:CGRectMake(W/2 - 110, swY, 30, 30)];
+    locIcon.text = @"➤";
+    locIcon.font = [UIFont systemFontOfSize:22];
+    locIcon.textColor = [UIColor systemBlueColor];
+    locIcon.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:locIcon];
+
+    self.locationSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(W/2 - 70, swY, 51, 31)];
+    self.locationSwitch.on = DKSpoofEnabled();
+    [self.locationSwitch addTarget:self action:@selector(locSwitchChanged) forControlEvents:UIControlEventValueChanged];
+    self.locationSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:self.locationSwitch];
+
+    UILabel *altIcon = [[UILabel alloc] initWithFrame:CGRectMake(W/2 + 20, swY, 30, 30)];
+    altIcon.text = @"⛰";
+    altIcon.font = [UIFont systemFontOfSize:20];
+    altIcon.textColor = [UIColor systemGrayColor];
+    altIcon.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:altIcon];
+
+    self.altitudeSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(W/2 + 55, swY, 51, 31)];
+    self.altitudeSwitch.on = [DKDefaults() boolForKey:kKeyAltOn];
+    [self.altitudeSwitch addTarget:self action:@selector(altSwitchChanged) forControlEvents:UIControlEventValueChanged];
+    self.altitudeSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:self.altitudeSwitch];
+
+    UILabel *locText = [[UILabel alloc] initWithFrame:CGRectMake(W/2 - 110, swY + 32, 100, 20)];
+    locText.text = @"位置模拟";
+    locText.font = [UIFont systemFontOfSize:13];
+    locText.textAlignment = NSTextAlignmentCenter;
+    locText.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:locText];
+
+    UILabel *altText = [[UILabel alloc] initWithFrame:CGRectMake(W/2 + 10, swY + 32, 100, 20)];
+    altText.text = @"海拔模拟";
+    altText.font = [UIFont systemFontOfSize:13];
+    altText.textAlignment = NSTextAlignmentCenter;
+    altText.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:altText];
+
+    // ---- 确认位置 大按钮 ----
+    UIButton *confirm = [UIButton buttonWithType:UIButtonTypeSystem];
+    confirm.frame = CGRectMake(20, H - 66, W - 40, 50);
+    [confirm setTitle:@"确认位置" forState:UIControlStateNormal];
+    confirm.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    confirm.backgroundColor = [UIColor systemBlueColor];
+    confirm.layer.cornerRadius = 10;
+    [confirm addTarget:self action:@selector(confirmTapped) forControlEvents:UIControlEventTouchUpInside];
+    confirm.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleTopMargin;
+    [self.view addSubview:confirm];
+
+    // ---- 初始化地图位置 ----
+    CLLocationCoordinate2D init = CLLocationCoordinate2DMake(39.9042, 116.4074);
+    if (DKSpoofCoordinate(&init)) {
+        self.picked = init;
+        self.hasPicked = YES;
+        [self dropPin:init title:@"已保存的位置"];
+    } else {
+        init = CLLocationCoordinate2DMake(39.9042, 116.4074);
+    }
+    [self.mapView setRegion:MKCoordinateRegionMakeWithDistance(init, 1500, 1500) animated:NO];
+    [self updateCoordLabel];
 }
 
+- (void)closeTapped { [self dismissViewControllerAnimated:YES completion:nil]; }
+
+- (void)updateCoordLabel {
+    double alt = [DKDefaults() doubleForKey:kKeyAlt];
+    if (self.hasPicked) {
+        self.coordLabel.text = [NSString stringWithFormat:@"位置: %.4f, %.4f\n海拔: %.2f米",
+                                self.picked.latitude, self.picked.longitude, alt];
+    } else {
+        self.coordLabel.text = @"位置: 未选择\n海拔: --";
+    }
+}
+
+- (void)dropPin:(CLLocationCoordinate2D)c title:(NSString *)title {
+    if (self.pin) [self.mapView removeAnnotation:self.pin];
+    self.pin = [MKPointAnnotation new];
+    self.pin.coordinate = c;
+    self.pin.title = title;
+    [self.mapView addAnnotation:self.pin];
+}
+
+#pragma mark - 地图选点
 - (void)mapLongPressed:(UILongPressGestureRecognizer *)gr {
     if (gr.state != UIGestureRecognizerStateBegan) return;
     CGPoint pt = [gr locationInView:self.mapView];
     CLLocationCoordinate2D coord = [self.mapView convertPoint:pt toCoordinateFromView:self.mapView];
     self.picked = coord;
     self.hasPicked = YES;
-    [self.mapView removeAnnotations:self.mapView.annotations];
-    MKPointAnnotation *ann = [MKPointAnnotation new];
-    ann.coordinate = coord;
-    [self.mapView addAnnotation:ann];
-    self.coordLabel.text = [NSString stringWithFormat:@"%.6f, %.6f", coord.latitude, coord.longitude];
+    [self dropPin:coord title:@"已选择的位置"];
+    [self updateCoordLabel];
 }
 
-- (void)confirmTapped {
-    if (!self.hasPicked) {
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"未选点" message:@"请先长按地图选择位置" preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:a animated:YES completion:nil];
-        return;
-    }
-    if (self.onDone) self.onDone(self.picked.latitude, self.picked.longitude, self.searchBar.text);
-    [self.navigationController popViewControllerAnimated:YES];
+- (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
+    if ([annotation isKindOfClass:[MKUserLocation class]]) return nil;
+    MKPinAnnotationView *v = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:@"pin"];
+    if (!v) { v = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:@"pin"]; v.canShowCallout = YES; }
+    v.annotation = annotation;
+    v.pinTintColor = [UIColor systemRedColor];
+    v.animatesDrop = YES;
+    return v;
 }
 
 #pragma mark - 搜索
-
 - (void)searchBarSearchButtonClicked:(UISearchBar *)sb {
     [sb resignFirstResponder];
     NSString *q = sb.text;
@@ -163,127 +290,110 @@ static void DKApplyCoordinate(double lat, double lon, NSString *name) {
         CLLocationCoordinate2D c = pm.location.coordinate;
         self.picked = c;
         self.hasPicked = YES;
-        [self.mapView removeAnnotations:self.mapView.annotations];
-        MKPointAnnotation *ann = [MKPointAnnotation new];
-        ann.coordinate = c;
-        ann.title = pm.name;
-        [self.mapView addAnnotation:ann];
-        [self.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1500, 1500) animated:YES];
-        self.coordLabel.text = [NSString stringWithFormat:@"%@\n%.6f, %.6f", pm.name ?: q, c.latitude, c.longitude];
+        [self dropPin:c title:pm.name ?: q];
+        [self.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1200, 1200) animated:YES];
+        [self updateCoordLabel];
     }];
 }
 
-@end
-
-#pragma mark - 主设置面板
-
-@interface DKPanelVC : UITableViewController
-@property (nonatomic, strong) NSArray<DKPlace *> *saved;
-@property (nonatomic, strong) NSArray<DKPlace *> *history;
-@end
-
-@implementation DKPanelVC
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"虚拟定位";
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeTapped)];
-    [self reload];
-}
-
-- (void)closeTapped { [self dismissViewControllerAnimated:YES completion:nil]; }
-
-- (void)reload {
-    self.saved = DKLoadPlaces(kKeySaved);
-    self.history = DKLoadPlaces(kKeyHistory);
-    [self.tableView reloadData];
-}
-
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
-
-- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s {
-    if (s == 0) return @"状态";
-    if (s == 1) return @"常用地点";
-    return @"历史记录";
-}
-
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    if (s == 0) return 3;
-    if (s == 1) return self.saved.count;
-    return self.history.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"c"];
-    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"c"];
-    cell.accessoryType = UITableViewCellAccessoryNone;
-    cell.detailTextLabel.text = nil;
-
-    if (ip.section == 0) {
-        if (ip.row == 0) {
-            cell.textLabel.text = @"定位伪造";
-            cell.accessoryType = DKSpoofEnabled() ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
-        } else if (ip.row == 1) {
-            cell.textLabel.text = @"地图选点";
-            cell.detailTextLabel.text = @"长按地图选择位置";
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        } else {
-            CLLocationCoordinate2D c = {0,0};
-            if (DKSpoofCoordinate(&c))
-                cell.detailTextLabel.text = [NSString stringWithFormat:@"当前: %.6f, %.6f", c.latitude, c.longitude];
-            else
-                cell.detailTextLabel.text = @"当前: 未设置";
-            cell.textLabel.text = @"恢复真实定位";
-        }
-    } else {
-        DKPlace *p = (ip.section == 1) ? self.saved[ip.row] : self.history[ip.row];
-        cell.textLabel.text = p.name.length ? p.name : [NSString stringWithFormat:@"%.5f, %.5f", p.lat, p.lon];
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"%.6f, %.6f", p.lat, p.lon];
-    }
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
-
-    if (ip.section == 0) {
-        if (ip.row == 0) {
-            BOOL en = DKSpoofEnabled();
-            [DKDefaults() setBool:!en forKey:kKeyEnabled];
-            [DKDefaults() synchronize];
-            [self reload];
-        } else if (ip.row == 1) {
-            DKMapPickerVC *vc = [DKMapPickerVC new];
-            __weak typeof(self) weakSelf = self;
-            // 地图选点确认后：直接应用坐标 + 可选保存为常用
-            vc.onDone = ^(double lat, double lon, NSString *name) {
-                DKApplyCoordinate(lat, lon, name);   // ★ 立即应用（写坐标+开开关+存历史）
-                if (name.length) {
-                    DKPlace *p = [DKPlace new];
-                    p.name = name; p.lat = lat; p.lon = lon;
-                    DKSavePlaceTo(kKeySaved, p);      // 顺便存为常用
-                }
-                [weakSelf reload];
-            };
-            [self.navigationController pushViewController:vc animated:YES];
-        } else {
-            // 恢复真实定位
-            [DKDefaults() setBool:NO forKey:kKeyEnabled];
-            [DKDefaults() synchronize];
-            [self reload];
-        }
-    } else {
-        DKPlace *p = (ip.section == 1) ? self.saved[ip.row] : self.history[ip.row];
-        DKApplyCoordinate(p.lat, p.lon, p.name);
-        [self reload];
+#pragma mark - 三个按钮
+- (void)segChanged:(UISegmentedControl *)seg {
+    NSInteger idx = seg.selectedSegmentIndex;
+    seg.selectedSegmentIndex = -1;
+    if (idx == 0) {
+        // 历史记录
+        DKHistoryVC *h = [DKHistoryVC new];
+        __weak typeof(self) ws = self;
+        h.onPick = ^(DKPlace *p) {
+            CLLocationCoordinate2D c = CLLocationCoordinate2DMake(p.lat, p.lon);
+            ws.picked = c; ws.hasPicked = YES;
+            [ws dropPin:c title:p.name.length ? p.name : @"已保存的位置"];
+            [ws.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1200, 1200) animated:YES];
+            [ws updateCoordLabel];
+        };
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:h];
+        nav.modalPresentationStyle = UIModalPresentationPageSheet;
+        [self presentViewController:nav animated:YES completion:nil];
+    } else if (idx == 1) {
+        [self promptInputLocation];
+    } else if (idx == 2) {
+        [self promptInputAltitude];
     }
 }
 
+- (void)promptInputLocation {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"手动输入位置"
+        message:@"请输入纬度和经度\n(例如: 39.9042, 116.4074)" preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"纬度 (-90 ~ 90)"; tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation; }];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"经度 (-180 ~ 180)"; tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation; }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) ws = self;
+    [a addAction:[UIAlertAction actionWithTitle:@"确认" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+        double lat = [a.textFields[0].text doubleValue];
+        double lon = [a.textFields[1].text doubleValue];
+        if (lat == 0 && lon == 0) return;
+        CLLocationCoordinate2D c = CLLocationCoordinate2DMake(lat, lon);
+        if (!CLLocationCoordinate2DIsValid(c)) return;
+        ws.picked = c; ws.hasPicked = YES;
+        [ws dropPin:c title:@"手动输入的位置"];
+        [ws.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1200, 1200) animated:YES];
+        [ws updateCoordLabel];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)promptInputAltitude {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"手动输入海拔"
+        message:@"请输入海拔高度（单位：米）" preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"海拔（单位：米）"; tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation; }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"确认" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+        double alt = [a.textFields[0].text doubleValue];
+        [DKDefaults() setDouble:alt forKey:kKeyAlt];
+        [DKDefaults() setBool:YES forKey:kKeyAltOn];
+        [DKDefaults() synchronize];
+        [self updateCoordLabel];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+#pragma mark - 开关
+- (void)locSwitchChanged {
+    [DKDefaults() setBool:self.locationSwitch.on forKey:kKeyEnabled];
+    [DKDefaults() synchronize];
+}
+- (void)altSwitchChanged {
+    [DKDefaults() setBool:self.altitudeSwitch.on forKey:kKeyAltOn];
+    [DKDefaults() synchronize];
+}
+
+#pragma mark - 确认位置
+- (void)confirmTapped {
+    if (!self.hasPicked) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"未选点" message:@"请先在地图上选择位置" preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    NSUserDefaults *d = DKDefaults();
+    [d setDouble:self.picked.latitude forKey:kKeyLat];
+    [d setDouble:self.picked.longitude forKey:kKeyLon];
+    [d setBool:YES forKey:kKeyEnabled];
+    [d synchronize];
+    DKPlace *p = [DKPlace new];
+    p.name = self.pin.title.length ? self.pin.title : [NSString stringWithFormat:@"%.4f, %.4f", self.picked.latitude, self.picked.longitude];
+    p.lat = self.picked.latitude; p.lon = self.picked.longitude;
+    DKSavePlaceTo(kKeyHistory, p);
+    // 提示成功
+    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已设置" message:@"虚拟位置已生效，重启钉钉后打卡" preferredStyle:UIAlertControllerStyleAlert];
+    [ok addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:ok animated:YES completion:nil];
+}
+
 @end
 
-#pragma mark - 手势 & 入口
+#pragma mark - 三指双击手势
 
-// 前置声明（实现见文件末尾）
 @interface DKGestureHandler : NSObject <UIGestureRecognizerDelegate>
 + (instancetype)shared;
 - (void)handle:(UITapGestureRecognizer *)gr;
@@ -291,8 +401,8 @@ static void DKApplyCoordinate(double lat, double lon, NSString *name) {
 
 static UIWindow *DKPanelWindow = nil;
 
-static void DKOnThreeFingerDoubleTap(void) {
-    if (DKPanelWindow) return;  // 已显示
+static void DKShowPanel(void) {
+    if (DKPanelWindow) return;
     UIWindow *key = nil;
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -308,12 +418,10 @@ static void DKOnThreeFingerDoubleTap(void) {
     if (!key) return;
 
     DKPanelVC *panel = [DKPanelVC new];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:panel];
-    nav.modalPresentationStyle = UIModalPresentationFormSheet;
-
+    panel.modalPresentationStyle = UIModalPresentationFormSheet;
     UIViewController *root = key.rootViewController;
     if (!root) return;
-    [root presentViewController:nav animated:YES completion:nil];
+    [root presentViewController:panel animated:YES completion:nil];
 }
 
 void DKSetupGestureOnWindow(UIWindow *window) {
@@ -321,7 +429,7 @@ void DKSetupGestureOnWindow(UIWindow *window) {
     for (UIGestureRecognizer *g in window.gestureRecognizers) {
         if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
             UITapGestureRecognizer *t = (UITapGestureRecognizer *)g;
-            if (t.numberOfTapsRequired == 2 && t.numberOfTouchesRequired == 3) return; // 已安装
+            if (t.numberOfTapsRequired == 2 && t.numberOfTouchesRequired == 3) return;
         }
     }
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[DKGestureHandler shared] action:@selector(handle:)];
@@ -333,8 +441,6 @@ void DKSetupGestureOnWindow(UIWindow *window) {
     [window addGestureRecognizer:tap];
 }
 
-#pragma mark - 手势处理器（单例）
-
 @implementation DKGestureHandler
 + (instancetype)shared {
     static DKGestureHandler *h = nil;
@@ -344,11 +450,8 @@ void DKSetupGestureOnWindow(UIWindow *window) {
 }
 - (void)handle:(UITapGestureRecognizer *)gr {
     if (gr.state == UIGestureRecognizerStateEnded) {
-        dispatch_async(dispatch_get_main_queue(), ^{ DKOnThreeFingerDoubleTap(); });
+        dispatch_async(dispatch_get_main_queue(), ^{ DKShowPanel(); });
     }
 }
-// 三指双击不干扰其他手势
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return YES;
-}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other { return YES; }
 @end
