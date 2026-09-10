@@ -1,4 +1,3 @@
-# DKSpoof macOS 原生构建（标准 substrate，兼容 TrollFools 注入）
 name: Build DKSpoof
 
 on:
@@ -26,14 +25,9 @@ jobs:
             "https://raw.githubusercontent.com/583663742/qqfloatball-build-pub/main/sdk/iPhoneOS16.5.sdk.tar.xz"
           tar -xJf "$THEOS/sdks/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
 
-      - name: Install ldid (needed for arm64e signing)
+      - name: Install ldid
         run: |
           brew install ldid || brew install --build-from-source ldid || (mkdir -p "$THEOS/bin" && curl -L -o "$THEOS/bin/ldid" https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_macosx_arm64 && chmod +x "$THEOS/bin/ldid" && echo "$THEOS/bin" >> $GITHUB_PATH)
-
-      - name: Verify Makefile (Apple ld64 default, no -fuse-ld=lld)
-        run: |
-          grep -n "LDFLAGS" Makefile || true
-          grep -n "ARCHS" Makefile || true
 
       - name: Build package
         run: |
@@ -43,7 +37,7 @@ jobs:
       - name: List artifacts
         run: |
           ls -la packages/ || true
-          find . -name "*.deb" -not -path "./layout/*" | head -5
+          find .theos/obj -name "*.dylib" | head
 
       - name: Upload deb + dylib
         uses: actions/upload-artifact@v4
