@@ -415,8 +415,8 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     p.name = name; p.lat = self.picked.latitude; p.lon = self.picked.longitude;
     DKSavePlaceTo(kKeyHistory, p);
 
-    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已设置"
-        message:@"虚拟位置已生效（若打卡未变，请重启钉钉）" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已生效"
+        message:@"虚拟位置已立即生效" preferredStyle:UIAlertControllerStyleAlert];
     [ok addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:ok animated:YES completion:nil];
 }
