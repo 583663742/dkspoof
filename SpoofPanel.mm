@@ -323,7 +323,7 @@ void DKSetupGestureOnWindow(UIWindow *window) {
             if (t.numberOfTapsRequired == 2 && t.numberOfTouchesRequired == 3) return; // 已安装
         }
     }
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[DKGestureHandler class] action:@selector(handle:)];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[DKGestureHandler shared] action:@selector(handle:)];
     tap.numberOfTapsRequired = 2;
     tap.numberOfTouchesRequired = 3;
     tap.cancelsTouchesInView = NO;
