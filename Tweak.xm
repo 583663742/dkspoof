@@ -60,8 +60,36 @@ static void DKDeliverFakeLocation(CLLocationManager *mgr) {
     }
 }
 
+// ============ 活动 CLLocationManager 追踪（用于实时刷新）============
+// 记录所有被创建的 manager，改坐标后可主动推送新位置
+static NSHashTable *DKActiveManagers(void) {
+    static NSHashTable *t = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        t = [NSHashTable weakObjectsHashTable];
+    });
+    return t;
+}
+
+// 主动向所有活动 manager 的 delegate 推送当前伪造位置（改坐标后立即生效）
+void DKRefreshAllManagers(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSArray *all = [DKActiveManagers() allObjects];
+        for (CLLocationManager *mgr in all) {
+            if (!DKSpoofEnabled()) break;
+            DKDeliverFakeLocation(mgr);
+        }
+    });
+}
+
 // ============ Hook CLLocationManager ============
 %hook CLLocationManager
+
+- (instancetype)init {
+    id r = %orig;
+    if (r) [DKActiveManagers() addObject:r];
+    return r;
+}
 
 - (CLLocation *)location {
     if (DKSpoofEnabled()) {
