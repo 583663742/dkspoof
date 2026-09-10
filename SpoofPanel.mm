@@ -1,5 +1,4 @@
-// DKSpoof v2 - 位置模拟面板（严格照 FakeTools 结构复刻）
-// 结构：搜索框 + [历史记录][输入位置][输入海拔] + 地图 + 坐标浮层 + 两个开关 + 确认位置
+// DKSpoof v2 - 位置模拟面板（自研浅蓝风格）
 // 唤出：三指双击
 
 #import <UIKit/UIKit.h>
@@ -9,7 +8,7 @@
 extern NSUserDefaults *DKDefaults(void);
 extern BOOL DKSpoofEnabled(void);
 extern BOOL DKSpoofCoordinate(CLLocationCoordinate2D *outCoord);
-extern void DKRefreshAllManagers(void);   // 改坐标后实时推送
+extern void DKRefreshAllManagers(void);
 
 static NSString * const kKeyEnabled = @"LocationSpoofingEnabled";
 static NSString * const kKeyLat     = @"SpoofLatitude";
@@ -18,6 +17,15 @@ static NSString * const kKeyAlt     = @"SpoofAltitude";
 static NSString * const kKeyAltOn   = @"AltitudeSpoofingEnabled";
 static NSString * const kKeySaved   = @"SavedLocations";
 static NSString * const kKeyHistory = @"LocationHistory";
+
+// ===== 配色 =====
+#define DK_BG_TOP     [UIColor colorWithRed:0.898 green:0.945 blue:1.0 alpha:1.0]   // #E5F1FF
+#define DK_BG_BOTTOM  [UIColor colorWithRed:0.961 green:0.980 blue:1.0 alpha:1.0]   // #F5FAFF
+#define DK_CARD_BG    [UIColor whiteColor]
+#define DK_ACCENT     [UIColor colorWithRed:0.192 green:0.510 blue:0.965 alpha:1.0] // #3182F6
+#define DK_TOGGLE_ON  [UIColor colorWithRed:1.0 green:0.231 blue:0.188 alpha:1.0]   // #FF3B30 红
+#define DK_TEXT_MAIN  [UIColor colorWithRed:0.11 green:0.13 blue:0.18 alpha:1.0]
+#define DK_TEXT_SUB   [UIColor colorWithRed:0.45 green:0.50 blue:0.58 alpha:1.0]
 
 #pragma mark - 记录模型
 
@@ -65,6 +73,7 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"位置历史";
+    self.tableView.backgroundColor = DK_BG_BOTTOM;
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(closeTapped)];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash target:self action:@selector(clearTapped)];
     self.items = DKLoadPlaces(kKeyHistory);
@@ -82,6 +91,7 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"h"];
     DKPlace *p = self.items[ip.row];
     c.textLabel.text = p.name.length ? p.name : [NSString stringWithFormat:@"%.6f, %.6f", p.lat, p.lon];
+    c.textLabel.textColor = DK_TEXT_MAIN;
     c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return c;
 }
@@ -108,161 +118,248 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 
 @implementation DKPanelVC
 
+// 卡片工厂
+- (UIView *)makeCard {
+    UIView *v = [[UIView alloc] init];
+    v.translatesAutoresizingMaskIntoConstraints = NO;
+    v.backgroundColor = DK_CARD_BG;
+    v.layer.cornerRadius = 16;
+    v.layer.shadowColor = [UIColor colorWithRed:0.2 green:0.4 blue:0.7 alpha:0.10].CGColor;
+    v.layer.shadowOpacity = 1.0;
+    v.layer.shadowRadius = 10;
+    v.layer.shadowOffset = CGSizeMake(0, 3);
+    return v;
+}
+
+// 图标按钮（历史/输入位置/输入海拔）
+- (UIButton *)makeToolButton:(NSString *)title icon:(NSString *)icon sel:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.translatesAutoresizingMaskIntoConstraints = NO;
+    b.backgroundColor = DK_CARD_BG;
+    b.layer.cornerRadius = 14;
+    b.layer.shadowColor = [UIColor colorWithRed:0.2 green:0.4 blue:0.7 alpha:0.10].CGColor;
+    b.layer.shadowOpacity = 1.0;
+    b.layer.shadowRadius = 8;
+    b.layer.shadowOffset = CGSizeMake(0, 2);
+    // 图标在上，文字在下
+    [b setTitle:[NSString stringWithFormat:@"%@\n%@", icon, title] forState:UIControlStateNormal];
+    b.titleLabel.numberOfLines = 2;
+    b.titleLabel.textAlignment = NSTextAlignmentCenter;
+    b.titleLabel.font = [UIFont systemFontOfSize:12];
+    [b setTitleColor:DK_TEXT_MAIN forState:UIControlStateNormal];
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
 
-    // ===== 顶部标题栏 =====
+    // 浅蓝渐变背景
+    CAGradientLayer *grad = [CAGradientLayer layer];
+    grad.frame = [UIScreen mainScreen].bounds;
+    grad.colors = @[(id)DK_BG_TOP.CGColor, (id)DK_BG_BOTTOM.CGColor];
+    grad.startPoint = CGPointMake(0.5, 0);
+    grad.endPoint = CGPointMake(0.5, 1);
+    [self.view.layer insertSublayer:grad atIndex:0];
+    self.view.backgroundColor = DK_BG_BOTTOM;
+
+    // ===== 标题：📍 虚拟定位（左对齐）=====
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"位置模拟";
-    title.font = [UIFont boldSystemFontOfSize:18];
-    title.textAlignment = NSTextAlignmentCenter;
+    title.text = @"📍 虚拟定位";
+    title.font = [UIFont boldSystemFontOfSize:20];
+    title.textColor = DK_TEXT_MAIN;
     [self.view addSubview:title];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.translatesAutoresizingMaskIntoConstraints = NO;
     [close setTitle:@"✕" forState:UIControlStateNormal];
-    close.titleLabel.font = [UIFont systemFontOfSize:22];
+    close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightMedium];
+    [close setTitleColor:DK_TEXT_SUB forState:UIControlStateNormal];
     [close addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:close];
 
-    // ===== 搜索框 =====
+    // ===== 搜索卡片 =====
+    UIView *searchCard = [self makeCard];
+    [self.view addSubview:searchCard];
     self.searchBar = [[UISearchBar alloc] init];
     self.searchBar.translatesAutoresizingMaskIntoConstraints = NO;
     self.searchBar.delegate = self;
     self.searchBar.placeholder = @"搜索地址或地点";
     self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
-    [self.view addSubview:self.searchBar];
+    self.searchBar.backgroundImage = [[UIImage alloc] init];
+    [searchCard addSubview:self.searchBar];
 
-    // ===== 三个按钮：历史记录 | 输入位置 | 输入海拔 =====
-    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"历史记录", @"输入位置", @"输入海拔"]];
-    seg.translatesAutoresizingMaskIntoConstraints = NO;
-    seg.selectedSegmentIndex = -1;
-    [seg addTarget:self action:@selector(segChanged:) forControlEvents:UIControlEventValueChanged];
-    [self.view addSubview:seg];
+    // ===== 地图卡片 =====
+    UIView *mapCard = [self makeCard];
+    mapCard.layer.cornerRadius = 18;
+    mapCard.clipsToBounds = NO;
+    [self.view addSubview:mapCard];
 
-    // ===== 地图 =====
     self.mapView = [[MKMapView alloc] init];
     self.mapView.translatesAutoresizingMaskIntoConstraints = NO;
     self.mapView.delegate = self;
-    self.mapView.layer.cornerRadius = 12;
+    self.mapView.layer.cornerRadius = 18;
     self.mapView.clipsToBounds = YES;
-    [self.view addSubview:self.mapView];
+    [mapCard addSubview:self.mapView];
 
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mapLongPressed:)];
     lp.minimumPressDuration = 0.35;
     [self.mapView addGestureRecognizer:lp];
 
-    // ===== 坐标浮层（地图左上）=====
+    // 坐标浮层
     self.infoCard = [[UIView alloc] init];
     self.infoCard.translatesAutoresizingMaskIntoConstraints = NO;
-    self.infoCard.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.92];
-    self.infoCard.layer.cornerRadius = 8;
+    self.infoCard.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.95];
+    self.infoCard.layer.cornerRadius = 10;
     [self.mapView addSubview:self.infoCard];
 
     self.coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, 180, 48)];
     self.coordLabel.numberOfLines = 2;
-    self.coordLabel.font = [UIFont systemFontOfSize:13];
-    self.coordLabel.textColor = [UIColor blackColor];
+    self.coordLabel.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium];
+    self.coordLabel.textColor = DK_TEXT_MAIN;
     [self.infoCard addSubview:self.coordLabel];
 
+    // ===== 三个图标按钮（横排）=====
+    UIButton *btnHistory = [self makeToolButton:@"历史" icon:@"🕐" sel:@selector(tapHistory)];
+    UIButton *btnInput   = [self makeToolButton:@"输入位置" icon:@"⌨️" sel:@selector(tapInputLocation)];
+    UIButton *btnAlt     = [self makeToolButton:@"输入海拔" icon:@"⛰️" sel:@selector(tapInputAltitude)];
+    [self.view addSubview:btnHistory];
+    [self.view addSubview:btnInput];
+    [self.view addSubview:btnAlt];
 
-    // ===== 两个开关：位置模拟 | 海拔模拟 =====
-    UILabel *locText = [[UILabel alloc] init];
-    locText.translatesAutoresizingMaskIntoConstraints = NO;
-    locText.text = @"位置模拟";
-    locText.font = [UIFont systemFontOfSize:13];
-    locText.textAlignment = NSTextAlignmentCenter;
-    [self.view addSubview:locText];
+    // ===== 开关卡片 =====
+    UIView *switchCard = [self makeCard];
+    [self.view addSubview:switchCard];
+
+    UILabel *locTitle = [[UILabel alloc] init];
+    locTitle.translatesAutoresizingMaskIntoConstraints = NO;
+    locTitle.text = @"📍 位置模拟";
+    locTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    locTitle.textColor = DK_TEXT_MAIN;
+    [switchCard addSubview:locTitle];
 
     self.locationSwitch = [[UISwitch alloc] init];
     self.locationSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    self.locationSwitch.onTintColor = DK_TOGGLE_ON;   // ★ 红色开启
     self.locationSwitch.on = DKSpoofEnabled();
     [self.locationSwitch addTarget:self action:@selector(locSwitchChanged) forControlEvents:UIControlEventValueChanged];
-    [self.view addSubview:self.locationSwitch];
+    [switchCard addSubview:self.locationSwitch];
 
-    UILabel *altText = [[UILabel alloc] init];
-    altText.translatesAutoresizingMaskIntoConstraints = NO;
-    altText.text = @"海拔模拟";
-    altText.font = [UIFont systemFontOfSize:13];
-    altText.textAlignment = NSTextAlignmentCenter;
-    [self.view addSubview:altText];
+    UIView *divider = [[UIView alloc] init];
+    divider.translatesAutoresizingMaskIntoConstraints = NO;
+    divider.backgroundColor = [UIColor colorWithWhite:0.9 alpha:1.0];
+    [switchCard addSubview:divider];
+
+    UILabel *altTitle = [[UILabel alloc] init];
+    altTitle.translatesAutoresizingMaskIntoConstraints = NO;
+    altTitle.text = @"⛰️ 海拔模拟";
+    altTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    altTitle.textColor = DK_TEXT_MAIN;
+    [switchCard addSubview:altTitle];
 
     self.altitudeSwitch = [[UISwitch alloc] init];
     self.altitudeSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    self.altitudeSwitch.onTintColor = DK_TOGGLE_ON;   // ★ 红色开启
     self.altitudeSwitch.on = [DKDefaults() boolForKey:kKeyAltOn];
     [self.altitudeSwitch addTarget:self action:@selector(altSwitchChanged) forControlEvents:UIControlEventValueChanged];
-    [self.view addSubview:self.altitudeSwitch];
+    [switchCard addSubview:self.altitudeSwitch];
 
-    // ===== 确认位置 大按钮 =====
+    // ===== 确认按钮 =====
     UIButton *confirm = [UIButton buttonWithType:UIButtonTypeSystem];
     confirm.translatesAutoresizingMaskIntoConstraints = NO;
     [confirm setTitle:@"确认位置" forState:UIControlStateNormal];
     confirm.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    confirm.backgroundColor = [UIColor systemBlueColor];
-    confirm.layer.cornerRadius = 10;
+    confirm.backgroundColor = DK_ACCENT;
+    confirm.layer.cornerRadius = 14;
+    confirm.layer.shadowColor = DK_ACCENT.CGColor;
+    confirm.layer.shadowOpacity = 0.35;
+    confirm.layer.shadowRadius = 10;
+    confirm.layer.shadowOffset = CGSizeMake(0, 4);
     [confirm addTarget:self action:@selector(confirmTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:confirm];
 
-    // ===== 约束布局 =====
+    // ===== 约束 =====
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
-        // 标题
-        [title.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
-        [title.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [title.heightAnchor constraintEqualToConstant:40],
-        // 关闭
+        [title.topAnchor constraintEqualToAnchor:safe.topAnchor constant:8],
+        [title.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
+        [title.heightAnchor constraintEqualToConstant:36],
         [close.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [close.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
         [close.widthAnchor constraintEqualToConstant:40],
-        [close.heightAnchor constraintEqualToConstant:40],
-        // 搜索框
-        [self.searchBar.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
-        [self.searchBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
-        [self.searchBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
-        [self.searchBar.heightAnchor constraintEqualToConstant:44],
-        // 分段按钮
-        [seg.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor constant:6],
-        [seg.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
-        [seg.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
-        [seg.heightAnchor constraintEqualToConstant:36],
-        // 确认按钮（贴底）
+        [close.heightAnchor constraintEqualToConstant:36],
+
+        [searchCard.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
+        [searchCard.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [searchCard.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [searchCard.heightAnchor constraintEqualToConstant:54],
+        [self.searchBar.topAnchor constraintEqualToAnchor:searchCard.topAnchor constant:4],
+        [self.searchBar.leadingAnchor constraintEqualToAnchor:searchCard.leadingAnchor constant:4],
+        [self.searchBar.trailingAnchor constraintEqualToAnchor:searchCard.trailingAnchor constant:-4],
+        [self.searchBar.bottomAnchor constraintEqualToAnchor:searchCard.bottomAnchor constant:-4],
+
+        [mapCard.topAnchor constraintEqualToAnchor:searchCard.bottomAnchor constant:12],
+        [mapCard.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [mapCard.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [self.mapView.topAnchor constraintEqualToAnchor:mapCard.topAnchor],
+        [self.mapView.leadingAnchor constraintEqualToAnchor:mapCard.leadingAnchor],
+        [self.mapView.trailingAnchor constraintEqualToAnchor:mapCard.trailingAnchor],
+        [self.mapView.bottomAnchor constraintEqualToAnchor:mapCard.bottomAnchor],
+        [self.infoCard.topAnchor constraintEqualToAnchor:self.mapView.topAnchor constant:10],
+        [self.infoCard.leadingAnchor constraintEqualToAnchor:self.mapView.leadingAnchor constant:10],
+        [self.infoCard.widthAnchor constraintEqualToConstant:200],
+        [self.infoCard.heightAnchor constraintEqualToConstant:58],
+
+        // 三个按钮
+        [btnHistory.topAnchor constraintEqualToAnchor:mapCard.bottomAnchor constant:12],
+        [btnHistory.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [btnInput.topAnchor constraintEqualToAnchor:btnHistory.topAnchor],
+        [btnInput.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [btnAlt.topAnchor constraintEqualToAnchor:btnHistory.topAnchor],
+        [btnAlt.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [btnHistory.widthAnchor constraintEqualToAnchor:btnInput.widthAnchor],
+        [btnAlt.widthAnchor constraintEqualToAnchor:btnHistory.widthAnchor],
+        [btnHistory.heightAnchor constraintEqualToConstant:58],
+        [btnInput.heightAnchor constraintEqualToConstant:58],
+        [btnAlt.heightAnchor constraintEqualToConstant:58],
+
+        // 开关卡片
+        [switchCard.topAnchor constraintEqualToAnchor:btnHistory.bottomAnchor constant:12],
+        [switchCard.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [switchCard.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [switchCard.heightAnchor constraintEqualToConstant:112],
+        [locTitle.topAnchor constraintEqualToAnchor:switchCard.topAnchor constant:16],
+        [locTitle.leadingAnchor constraintEqualToAnchor:switchCard.leadingAnchor constant:18],
+        [self.locationSwitch.centerYAnchor constraintEqualToAnchor:locTitle.centerYAnchor],
+        [self.locationSwitch.trailingAnchor constraintEqualToAnchor:switchCard.trailingAnchor constant:-16],
+        [divider.topAnchor constraintEqualToAnchor:switchCard.centerYAnchor constant:2],
+        [divider.leadingAnchor constraintEqualToAnchor:switchCard.leadingAnchor constant:18],
+        [divider.trailingAnchor constraintEqualToAnchor:switchCard.trailingAnchor constant:-18],
+        [divider.heightAnchor constraintEqualToConstant:1],
+        [altTitle.bottomAnchor constraintEqualToAnchor:switchCard.bottomAnchor constant:-18],
+        [altTitle.leadingAnchor constraintEqualToAnchor:switchCard.leadingAnchor constant:18],
+        [self.altitudeSwitch.centerYAnchor constraintEqualToAnchor:altTitle.centerYAnchor],
+        [self.altitudeSwitch.trailingAnchor constraintEqualToAnchor:switchCard.trailingAnchor constant:-16],
+
+        // 地图底部 = 开关卡片顶部
+        [mapCard.bottomAnchor constraintEqualToAnchor:btnHistory.topAnchor constant:-12],
+
+        // 确认按钮
         [confirm.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
         [confirm.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [confirm.topAnchor constraintEqualToAnchor:switchCard.bottomAnchor constant:14],
         [confirm.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-10],
-        [confirm.heightAnchor constraintEqualToConstant:50],
-        // 开关文字（在确认按钮上方）
-        [locText.bottomAnchor constraintEqualToAnchor:confirm.topAnchor constant:-38],
-        [locText.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor constant:-80],
-        [altText.centerYAnchor constraintEqualToAnchor:locText.centerYAnchor],
-        [altText.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor constant:80],
-        // 开关本体（文字上方）
-        [self.locationSwitch.centerXAnchor constraintEqualToAnchor:locText.centerXAnchor],
-        [self.locationSwitch.bottomAnchor constraintEqualToAnchor:locText.topAnchor constant:-4],
-        [self.altitudeSwitch.centerXAnchor constraintEqualToAnchor:altText.centerXAnchor],
-        [self.altitudeSwitch.centerYAnchor constraintEqualToAnchor:self.locationSwitch.centerYAnchor],
-        // 地图
-        [self.mapView.topAnchor constraintEqualToAnchor:seg.bottomAnchor constant:12],
-        [self.mapView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
-        [self.mapView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
-        [self.mapView.bottomAnchor constraintEqualToAnchor:self.locationSwitch.topAnchor constant:-14],
-        // 坐标浮层（地图左上）
-        [self.infoCard.topAnchor constraintEqualToAnchor:self.mapView.topAnchor constant:12],
-        [self.infoCard.leadingAnchor constraintEqualToAnchor:self.mapView.leadingAnchor constant:12],
-        [self.infoCard.widthAnchor constraintEqualToConstant:200],
-        [self.infoCard.heightAnchor constraintEqualToConstant:60],
+        [confirm.heightAnchor constraintGreaterThanOrEqualToConstant:50],
     ]];
 
-    // ---- 初始化地图位置 ----
+    // 初始化地图位置
     CLLocationCoordinate2D init = CLLocationCoordinate2DMake(39.9042, 116.4074);
     if (DKSpoofCoordinate(&init)) {
         self.picked = init;
         self.hasPicked = YES;
         [self dropPin:init title:@"已保存的位置"];
-    } else {
-        init = CLLocationCoordinate2DMake(39.9042, 116.4074);
     }
     [self.mapView setRegion:MKCoordinateRegionMakeWithDistance(init, 1500, 1500) animated:NO];
     [self updateCoordLabel];
@@ -288,30 +385,6 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [self.mapView addAnnotation:self.pin];
 }
 
-// 反向地理编码：坐标 → 地址名（异步更新 pin 标题）
-- (void)resolveNameForCoord:(CLLocationCoordinate2D)c {
-    CLLocation *loc = [[CLLocation alloc] initWithLatitude:c.latitude longitude:c.longitude];
-    CLGeocoder *geo = [CLGeocoder new];
-    __weak typeof(self) ws = self;
-    [geo reverseGeocodeLocation:loc completionHandler:^(NSArray<CLPlacemark *> *placemarks, NSError *error) {
-        if (error || placemarks.count == 0) return;
-        CLPlacemark *pm = placemarks.firstObject;
-        // 拼一个较完整的地址
-        NSMutableString *s = [NSMutableString string];
-        if (pm.subLocality) [s appendString:pm.subLocality];
-        if (pm.name && ![s containsString:pm.name]) { if (s.length) [s appendString:@" "]; [s appendString:pm.name]; }
-        if (s.length == 0 && pm.locality) [s appendString:pm.locality];
-        NSString *name = s.length ? s : (pm.name ?: @"");
-        if (name.length) {
-            ws.pin.title = name;
-            // 更新地图标注
-            [ws.mapView removeAnnotation:ws.pin];
-            [ws.mapView addAnnotation:ws.pin];
-        }
-    }];
-}
-
-#pragma mark - 地图选点
 - (void)mapLongPressed:(UILongPressGestureRecognizer *)gr {
     if (gr.state != UIGestureRecognizerStateBegan) return;
     CGPoint pt = [gr locationInView:self.mapView];
@@ -320,7 +393,6 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     self.hasPicked = YES;
     [self dropPin:coord title:@"解析中…"];
     [self updateCoordLabel];
-    [self resolveNameForCoord:coord];   // ★ 反查真实地点名
 }
 
 - (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
@@ -333,7 +405,7 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     return v;
 }
 
-#pragma mark - 搜索
+// 搜索
 - (void)searchBarSearchButtonClicked:(UISearchBar *)sb {
     [sb resignFirstResponder];
     NSString *q = sb.text;
@@ -352,31 +424,22 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 }
 
 #pragma mark - 三个按钮
-- (void)segChanged:(UISegmentedControl *)seg {
-    NSInteger idx = seg.selectedSegmentIndex;
-    seg.selectedSegmentIndex = -1;
-    if (idx == 0) {
-        // 历史记录
-        DKHistoryVC *h = [DKHistoryVC new];
-        __weak typeof(self) ws = self;
-        h.onPick = ^(DKPlace *p) {
-            CLLocationCoordinate2D c = CLLocationCoordinate2DMake(p.lat, p.lon);
-            ws.picked = c; ws.hasPicked = YES;
-            [ws dropPin:c title:p.name.length ? p.name : @"已保存的位置"];
-            [ws.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1200, 1200) animated:YES];
-            [ws updateCoordLabel];
-        };
-        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:h];
-        nav.modalPresentationStyle = UIModalPresentationPageSheet;
-        [self presentViewController:nav animated:YES completion:nil];
-    } else if (idx == 1) {
-        [self promptInputLocation];
-    } else if (idx == 2) {
-        [self promptInputAltitude];
-    }
+- (void)tapHistory {
+    DKHistoryVC *h = [DKHistoryVC new];
+    __weak typeof(self) ws = self;
+    h.onPick = ^(DKPlace *p) {
+        CLLocationCoordinate2D c = CLLocationCoordinate2DMake(p.lat, p.lon);
+        ws.picked = c; ws.hasPicked = YES;
+        [ws dropPin:c title:p.name.length ? p.name : @"已保存的位置"];
+        [ws.mapView setRegion:MKCoordinateRegionMakeWithDistance(c, 1200, 1200) animated:YES];
+        [ws updateCoordLabel];
+    };
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:h];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
-- (void)promptInputLocation {
+- (void)tapInputLocation {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"手动输入位置"
         message:@"请输入纬度和经度\n(例如: 39.9042, 116.4074)" preferredStyle:UIAlertControllerStyleAlert];
     [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"纬度 (-90 ~ 90)"; tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation; }];
@@ -397,7 +460,7 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [self presentViewController:a animated:YES completion:nil];
 }
 
-- (void)promptInputAltitude {
+- (void)tapInputAltitude {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"手动输入海拔"
         message:@"请输入海拔高度（单位：米）" preferredStyle:UIAlertControllerStyleAlert];
     [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"海拔（单位：米）"; tf.keyboardType = UIKeyboardTypeNumbersAndPunctuation; }];
@@ -416,12 +479,12 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 - (void)locSwitchChanged {
     [DKDefaults() setBool:self.locationSwitch.on forKey:kKeyEnabled];
     [DKDefaults() synchronize];
-    DKRefreshAllManagers();   // ★ 开=立即模拟，关=立即还原真实定位
+    DKRefreshAllManagers();
 }
 - (void)altSwitchChanged {
     [DKDefaults() setBool:self.altitudeSwitch.on forKey:kKeyAltOn];
     [DKDefaults() synchronize];
-    DKRefreshAllManagers();   // 海拔变化也刷新
+    DKRefreshAllManagers();
 }
 
 #pragma mark - 确认位置
@@ -437,15 +500,31 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [d setDouble:self.picked.longitude forKey:kKeyLon];
     [d setBool:YES forKey:kKeyEnabled];
     [d synchronize];
-
-    // ★ 实时生效：主动向所有活动 manager 推送新位置（无需重启钉钉）
     DKRefreshAllManagers();
+    if (self.locationSwitch.on != YES) {
+        [self.locationSwitch setOn:YES animated:YES];
+    }
 
-    // 保存历史（名字先用坐标，反向解析到后更新）
-    NSString *name = self.pin.title.length ? self.pin.title : [NSString stringWithFormat:@"%.4f, %.4f", self.picked.latitude, self.picked.longitude];
-    DKPlace *p = [DKPlace new];
-    p.name = name; p.lat = self.picked.latitude; p.lon = self.picked.longitude;
-    DKSavePlaceTo(kKeyHistory, p);
+    CLLocationCoordinate2D coord = self.picked;
+    CLLocation *loc = [[CLLocation alloc] initWithLatitude:coord.latitude longitude:coord.longitude];
+    CLGeocoder *geo = [CLGeocoder new];
+    __weak typeof(self) ws = self;
+    [geo reverseGeocodeLocation:loc completionHandler:^(NSArray<CLPlacemark *> *placemarks, NSError *error) {
+        NSString *finalName = nil;
+        if (!error && placemarks.count > 0) {
+            CLPlacemark *pm = placemarks.firstObject;
+            NSMutableString *s = [NSMutableString string];
+            if (pm.locality) [s appendString:pm.locality];
+            if (pm.subLocality && ![s containsString:pm.subLocality]) [s appendString:pm.subLocality];
+            if (pm.name.length && ![s containsString:pm.name]) { if (s.length) [s appendString:@" "]; [s appendString:pm.name]; }
+            finalName = s.length ? s : pm.name;
+        }
+        if (!finalName.length) finalName = [NSString stringWithFormat:@"%.4f, %.4f", coord.latitude, coord.longitude];
+        DKPlace *p = [DKPlace new];
+        p.name = finalName; p.lat = coord.latitude; p.lon = coord.longitude;
+        DKSavePlaceTo(kKeyHistory, p);
+        if (ws.pin) ws.pin.title = finalName;
+    }];
 
     UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已生效"
         message:@"虚拟位置已立即生效" preferredStyle:UIAlertControllerStyleAlert];
