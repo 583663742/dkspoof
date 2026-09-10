@@ -111,119 +111,149 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
-    CGFloat W = self.view.bounds.size.width;
-    CGFloat H = self.view.bounds.size.height;
 
-    // ---- 顶部标题栏 ----
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, W, 56)];
+    // ===== 顶部标题栏 =====
+    UILabel *title = [[UILabel alloc] init];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
     title.text = @"位置模拟";
     title.font = [UIFont boldSystemFontOfSize:18];
     title.textAlignment = NSTextAlignmentCenter;
-    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:title];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(W - 52, 12, 40, 32);
+    close.translatesAutoresizingMaskIntoConstraints = NO;
     [close setTitle:@"✕" forState:UIControlStateNormal];
     close.titleLabel.font = [UIFont systemFontOfSize:22];
     [close addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-    close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [self.view addSubview:close];
 
-    // ---- 搜索框 ----
-    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 56, W, 50)];
+    // ===== 搜索框 =====
+    self.searchBar = [[UISearchBar alloc] init];
+    self.searchBar.translatesAutoresizingMaskIntoConstraints = NO;
     self.searchBar.delegate = self;
     self.searchBar.placeholder = @"搜索地址或地点";
     self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
-    self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.searchBar];
 
-    // ---- 三个按钮：历史记录 | 输入位置 | 输入海拔 ----
+    // ===== 三个按钮：历史记录 | 输入位置 | 输入海拔 =====
     UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"历史记录", @"输入位置", @"输入海拔"]];
-    seg.frame = CGRectMake(20, 112, W - 40, 36);
+    seg.translatesAutoresizingMaskIntoConstraints = NO;
     seg.selectedSegmentIndex = -1;
     [seg addTarget:self action:@selector(segChanged:) forControlEvents:UIControlEventValueChanged];
-    seg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:seg];
 
-    // ---- 地图 ----
-    CGFloat mapTop = 160;
-    CGFloat mapBottomMargin = 140;
-    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(12, mapTop, W - 24, H - mapTop - mapBottomMargin)];
+    // ===== 地图 =====
+    self.mapView = [[MKMapView alloc] init];
+    self.mapView.translatesAutoresizingMaskIntoConstraints = NO;
     self.mapView.delegate = self;
     self.mapView.layer.cornerRadius = 12;
     self.mapView.clipsToBounds = YES;
-    self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.mapView];
 
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mapLongPressed:)];
     lp.minimumPressDuration = 0.35;
     [self.mapView addGestureRecognizer:lp];
 
-    // ---- 坐标浮层（地图左上）----
-    self.infoCard = [[UIView alloc] initWithFrame:CGRectMake(24, mapTop + 12, 200, 60)];
+    // ===== 坐标浮层（地图左上）=====
+    self.infoCard = [[UIView alloc] init];
+    self.infoCard.translatesAutoresizingMaskIntoConstraints = NO;
     self.infoCard.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.92];
     self.infoCard.layer.cornerRadius = 8;
-    [self.view addSubview:self.infoCard];
+    [self.mapView addSubview:self.infoCard];
+
     self.coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, 180, 48)];
     self.coordLabel.numberOfLines = 2;
     self.coordLabel.font = [UIFont systemFontOfSize:13];
     self.coordLabel.textColor = [UIColor blackColor];
     [self.infoCard addSubview:self.coordLabel];
 
-    // ---- 两个开关：位置模拟 | 海拔模拟 ----
-    CGFloat swY = H - 118;
-    UILabel *locIcon = [[UILabel alloc] initWithFrame:CGRectMake(W/2 - 110, swY, 30, 30)];
-    locIcon.text = @"➤";
-    locIcon.font = [UIFont systemFontOfSize:22];
-    locIcon.textColor = [UIColor systemBlueColor];
-    locIcon.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:locIcon];
 
-    self.locationSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(W/2 - 70, swY, 51, 31)];
-    self.locationSwitch.on = DKSpoofEnabled();
-    [self.locationSwitch addTarget:self action:@selector(locSwitchChanged) forControlEvents:UIControlEventValueChanged];
-    self.locationSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:self.locationSwitch];
-
-    UILabel *altIcon = [[UILabel alloc] initWithFrame:CGRectMake(W/2 + 20, swY, 30, 30)];
-    altIcon.text = @"⛰";
-    altIcon.font = [UIFont systemFontOfSize:20];
-    altIcon.textColor = [UIColor systemGrayColor];
-    altIcon.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:altIcon];
-
-    self.altitudeSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(W/2 + 55, swY, 51, 31)];
-    self.altitudeSwitch.on = [DKDefaults() boolForKey:kKeyAltOn];
-    [self.altitudeSwitch addTarget:self action:@selector(altSwitchChanged) forControlEvents:UIControlEventValueChanged];
-    self.altitudeSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:self.altitudeSwitch];
-
-    UILabel *locText = [[UILabel alloc] initWithFrame:CGRectMake(W/2 - 110, swY + 32, 100, 20)];
+    // ===== 两个开关：位置模拟 | 海拔模拟 =====
+    UILabel *locText = [[UILabel alloc] init];
+    locText.translatesAutoresizingMaskIntoConstraints = NO;
     locText.text = @"位置模拟";
     locText.font = [UIFont systemFontOfSize:13];
     locText.textAlignment = NSTextAlignmentCenter;
-    locText.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:locText];
 
-    UILabel *altText = [[UILabel alloc] initWithFrame:CGRectMake(W/2 + 10, swY + 32, 100, 20)];
+    self.locationSwitch = [[UISwitch alloc] init];
+    self.locationSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    self.locationSwitch.on = DKSpoofEnabled();
+    [self.locationSwitch addTarget:self action:@selector(locSwitchChanged) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:self.locationSwitch];
+
+    UILabel *altText = [[UILabel alloc] init];
+    altText.translatesAutoresizingMaskIntoConstraints = NO;
     altText.text = @"海拔模拟";
     altText.font = [UIFont systemFontOfSize:13];
     altText.textAlignment = NSTextAlignmentCenter;
-    altText.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:altText];
 
-    // ---- 确认位置 大按钮 ----
+    self.altitudeSwitch = [[UISwitch alloc] init];
+    self.altitudeSwitch.translatesAutoresizingMaskIntoConstraints = NO;
+    self.altitudeSwitch.on = [DKDefaults() boolForKey:kKeyAltOn];
+    [self.altitudeSwitch addTarget:self action:@selector(altSwitchChanged) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:self.altitudeSwitch];
+
+    // ===== 确认位置 大按钮 =====
     UIButton *confirm = [UIButton buttonWithType:UIButtonTypeSystem];
-    confirm.frame = CGRectMake(20, H - 66, W - 40, 50);
+    confirm.translatesAutoresizingMaskIntoConstraints = NO;
     [confirm setTitle:@"确认位置" forState:UIControlStateNormal];
     confirm.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     confirm.backgroundColor = [UIColor systemBlueColor];
     confirm.layer.cornerRadius = 10;
     [confirm addTarget:self action:@selector(confirmTapped) forControlEvents:UIControlEventTouchUpInside];
-    confirm.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleTopMargin;
     [self.view addSubview:confirm];
+
+    // ===== 约束布局 =====
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        // 标题
+        [title.topAnchor constraintEqualToAnchor:safe.topAnchor constant:4],
+        [title.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [title.heightAnchor constraintEqualToConstant:40],
+        // 关闭
+        [close.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [close.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [close.widthAnchor constraintEqualToConstant:40],
+        [close.heightAnchor constraintEqualToConstant:40],
+        // 搜索框
+        [self.searchBar.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
+        [self.searchBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [self.searchBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [self.searchBar.heightAnchor constraintEqualToConstant:44],
+        // 分段按钮
+        [seg.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor constant:6],
+        [seg.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [seg.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [seg.heightAnchor constraintEqualToConstant:36],
+        // 确认按钮（贴底）
+        [confirm.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
+        [confirm.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [confirm.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-10],
+        [confirm.heightAnchor constraintEqualToConstant:50],
+        // 开关文字（在确认按钮上方）
+        [locText.bottomAnchor constraintEqualToAnchor:confirm.topAnchor constant:-38],
+        [locText.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor constant:-80],
+        [altText.centerYAnchor constraintEqualToAnchor:locText.centerYAnchor],
+        [altText.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor constant:80],
+        // 开关本体（文字上方）
+        [self.locationSwitch.centerXAnchor constraintEqualToAnchor:locText.centerXAnchor],
+        [self.locationSwitch.bottomAnchor constraintEqualToAnchor:locText.topAnchor constant:-4],
+        [self.altitudeSwitch.centerXAnchor constraintEqualToAnchor:altText.centerXAnchor],
+        [self.altitudeSwitch.centerYAnchor constraintEqualToAnchor:self.locationSwitch.centerYAnchor],
+        // 地图
+        [self.mapView.topAnchor constraintEqualToAnchor:seg.bottomAnchor constant:12],
+        [self.mapView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
+        [self.mapView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
+        [self.mapView.bottomAnchor constraintEqualToAnchor:self.locationSwitch.topAnchor constant:-14],
+        // 坐标浮层（地图左上）
+        [self.infoCard.topAnchor constraintEqualToAnchor:self.mapView.topAnchor constant:12],
+        [self.infoCard.leadingAnchor constraintEqualToAnchor:self.mapView.leadingAnchor constant:12],
+        [self.infoCard.widthAnchor constraintEqualToConstant:200],
+        [self.infoCard.heightAnchor constraintEqualToConstant:60],
+    ]];
 
     // ---- 初始化地图位置 ----
     CLLocationCoordinate2D init = CLLocationCoordinate2DMake(39.9042, 116.4074);
