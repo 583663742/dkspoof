@@ -22,12 +22,10 @@ static NSUserDefaults *DKDefaults(void) {
     return d;
 }
 
-// 是否开启定位伪造
 static BOOL DKSpoofEnabled(void) {
     return [DKDefaults() boolForKey:kKeyEnabled];
 }
 
-// 读取伪造坐标；返回 NO 表示无有效坐标
 static BOOL DKSpoofCoordinate(CLLocationCoordinate2D *outCoord) {
     NSUserDefaults *d = DKDefaults();
     double lat = [d doubleForKey:kKeyLat];
@@ -39,7 +37,6 @@ static BOOL DKSpoofCoordinate(CLLocationCoordinate2D *outCoord) {
     return YES;
 }
 
-// 构造伪造成 CLLocation（水平精度 5m，模拟真实 GPS）
 static CLLocation *DKFakeLocation(void) {
     CLLocationCoordinate2D coord;
     if (!DKSpoofCoordinate(&coord)) return nil;
@@ -55,65 +52,64 @@ static CLLocation *DKFakeLocation(void) {
                                        timestamp:[NSDate date]];
 }
 
+// 统一的伪造回调派发
+static void DKDeliverFakeLocation(CLLocationManager *mgr) {
+    CLLocation *fake = DKFakeLocation();
+    if (!fake) return;
+    id delegate = [mgr delegate];
+    if (delegate && [delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+        [delegate locationManager:mgr didUpdateLocations:@[fake]];
+    }
+}
+
 // ============ Hook CLLocationManager ============
 %hook CLLocationManager
 
-// 拦截 location getter：直接返回伪造位置
 - (CLLocation *)location {
     if (DKSpoofEnabled()) {
         CLLocation *fake = DKFakeLocation();
-        if (fake) return fake;
+        if (fake) {
+            return fake;
+        }
     }
     return %orig;
 }
 
-// 拦截启动定位：改为直接回调伪造位置，不启真实 GPS
 - (void)startUpdatingLocation {
-    if (!DKSpoofEnabled()) { %orig; return; }
-    CLLocation *fake = DKFakeLocation();
-    if (!fake) { %orig; return; }
-    id delegate = [self delegate];
-    if (delegate && [delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-        [delegate locationManager:self didUpdateLocations:@[fake]];
+    if (DKSpoofEnabled() && DKFakeLocation()) {
+        DKDeliverFakeLocation(self);
+        return;
     }
+    %orig;
 }
 
-// 拦截单次定位请求
 - (void)requestLocation {
-    if (!DKSpoofEnabled()) { %orig; return; }
-    CLLocation *fake = DKFakeLocation();
-    if (!fake) { %orig; return; }
-    id delegate = [self delegate];
-    if (delegate && [delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-        [delegate locationManager:self didUpdateLocations:@[fake]];
+    if (DKSpoofEnabled() && DKFakeLocation()) {
+        DKDeliverFakeLocation(self);
+        return;
     }
+    %orig;
 }
 
-// 拦截持续定位（显著变化）
 - (void)startMonitoringSignificantLocationChanges {
-    if (!DKSpoofEnabled()) { %orig; return; }
-    CLLocation *fake = DKFakeLocation();
-    if (!fake) { %orig; return; }
-    id delegate = [self delegate];
-    if (delegate && [delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-        [delegate locationManager:self didUpdateLocations:@[fake]];
+    if (DKSpoofEnabled() && DKFakeLocation()) {
+        DKDeliverFakeLocation(self);
+        return;
     }
+    %orig;
 }
 
 %end
 
-// ============ Hook CLLocation（防止直接读坐标绕过） ============
+// ============ Hook CLLocation ============
 %hook CLLocation
 
 - (CLLocationCoordinate2D)coordinate {
-    static NSUserDefaults *d = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        d = [[NSUserDefaults alloc] initWithSuiteName:kSpoofSuiteName];
-    });
-    if ([d boolForKey:kKeyEnabled]) {
-        CLLocationCoordinate2D coord;
-        if (DKSpoofCoordinate(&coord)) return coord;
+    if (DKSpoofEnabled()) {
+        CLLocationCoordinate2D coord = {0, 0};
+        if (DKSpoofCoordinate(&coord)) {
+            return coord;
+        }
     }
     return %orig;
 }
