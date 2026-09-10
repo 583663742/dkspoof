@@ -386,10 +386,12 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
 - (void)locSwitchChanged {
     [DKDefaults() setBool:self.locationSwitch.on forKey:kKeyEnabled];
     [DKDefaults() synchronize];
+    DKRefreshAllManagers();   // ★ 开=立即模拟，关=立即还原真实定位
 }
 - (void)altSwitchChanged {
     [DKDefaults() setBool:self.altitudeSwitch.on forKey:kKeyAltOn];
     [DKDefaults() synchronize];
+    DKRefreshAllManagers();   // 海拔变化也刷新
 }
 
 #pragma mark - 确认位置
