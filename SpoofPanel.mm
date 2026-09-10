@@ -282,6 +282,12 @@ static void DKApplyCoordinate(double lat, double lon, NSString *name) {
 
 #pragma mark - 手势 & 入口
 
+// 前置声明（实现见文件末尾）
+@interface DKGestureHandler : NSObject <UIGestureRecognizerDelegate>
++ (instancetype)shared;
+- (void)handle:(UITapGestureRecognizer *)gr;
+@end
+
 static UIWindow *DKPanelWindow = nil;
 
 static void DKOnThreeFingerDoubleTap(void) {
@@ -327,9 +333,6 @@ void DKSetupGestureOnWindow(UIWindow *window) {
 }
 
 #pragma mark - 手势处理器（单例）
-
-@interface DKGestureHandler : NSObject <UIGestureRecognizerDelegate>
-@end
 
 @implementation DKGestureHandler
 + (instancetype)shared {
