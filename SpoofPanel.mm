@@ -9,6 +9,7 @@
 extern NSUserDefaults *DKDefaults(void);
 extern BOOL DKSpoofEnabled(void);
 extern BOOL DKSpoofCoordinate(CLLocationCoordinate2D *outCoord);
+extern void DKRefreshAllManagers(void);   // 改坐标后实时推送
 
 static NSString * const kKeyEnabled = @"LocationSpoofingEnabled";
 static NSString * const kKeyLat     = @"SpoofLatitude";
@@ -257,6 +258,29 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [self.mapView addAnnotation:self.pin];
 }
 
+// 反向地理编码：坐标 → 地址名（异步更新 pin 标题）
+- (void)resolveNameForCoord:(CLLocationCoordinate2D)c {
+    CLLocation *loc = [[CLLocation alloc] initWithLatitude:c.latitude longitude:c.longitude];
+    CLGeocoder *geo = [CLGeocoder new];
+    __weak typeof(self) ws = self;
+    [geo reverseGeocodeLocation:loc completionHandler:^(NSArray<CLPlacemark *> *placemarks, NSError *error) {
+        if (error || placemarks.count == 0) return;
+        CLPlacemark *pm = placemarks.firstObject;
+        // 拼一个较完整的地址
+        NSMutableString *s = [NSMutableString string];
+        if (pm.subLocality) [s appendString:pm.subLocality];
+        if (pm.name && ![s containsString:pm.name]) { if (s.length) [s appendString:@" "]; [s appendString:pm.name]; }
+        if (s.length == 0 && pm.locality) [s appendString:pm.locality];
+        NSString *name = s.length ? s : (pm.name ?: @"");
+        if (name.length) {
+            ws.pin.title = name;
+            // 更新地图标注
+            [ws.mapView removeAnnotation:ws.pin];
+            [ws.mapView addAnnotation:ws.pin];
+        }
+    }];
+}
+
 #pragma mark - 地图选点
 - (void)mapLongPressed:(UILongPressGestureRecognizer *)gr {
     if (gr.state != UIGestureRecognizerStateBegan) return;
@@ -264,8 +288,9 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     CLLocationCoordinate2D coord = [self.mapView convertPoint:pt toCoordinateFromView:self.mapView];
     self.picked = coord;
     self.hasPicked = YES;
-    [self dropPin:coord title:@"已选择的位置"];
+    [self dropPin:coord title:@"解析中…"];
     [self updateCoordLabel];
+    [self resolveNameForCoord:coord];   // ★ 反查真实地点名
 }
 
 - (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
@@ -380,12 +405,18 @@ static void DKSavePlaceTo(NSString *key, DKPlace *place) {
     [d setDouble:self.picked.longitude forKey:kKeyLon];
     [d setBool:YES forKey:kKeyEnabled];
     [d synchronize];
+
+    // ★ 实时生效：主动向所有活动 manager 推送新位置（无需重启钉钉）
+    DKRefreshAllManagers();
+
+    // 保存历史（名字先用坐标，反向解析到后更新）
+    NSString *name = self.pin.title.length ? self.pin.title : [NSString stringWithFormat:@"%.4f, %.4f", self.picked.latitude, self.picked.longitude];
     DKPlace *p = [DKPlace new];
-    p.name = self.pin.title.length ? self.pin.title : [NSString stringWithFormat:@"%.4f, %.4f", self.picked.latitude, self.picked.longitude];
-    p.lat = self.picked.latitude; p.lon = self.picked.longitude;
+    p.name = name; p.lat = self.picked.latitude; p.lon = self.picked.longitude;
     DKSavePlaceTo(kKeyHistory, p);
-    // 提示成功
-    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已设置" message:@"虚拟位置已生效，重启钉钉后打卡" preferredStyle:UIAlertControllerStyleAlert];
+
+    UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"已设置"
+        message:@"虚拟位置已生效（若打卡未变，请重启钉钉）" preferredStyle:UIAlertControllerStyleAlert];
     [ok addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:ok animated:YES completion:nil];
 }
