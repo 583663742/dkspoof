@@ -1,0 +1,8 @@
+Package: com.example.dkspoof
+Name: DKSpoof
+Version: 1.0.0
+Description: DingTalk virtual location spoof - clean CLLocationManager hook for TrollStore/TrollFools injection
+Depends: mobilesubstrate
+Maintainer: 傘
+Section: Tweaks
+Architecture: iphoneos-arm64e
