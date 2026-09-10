@@ -71,13 +71,19 @@ static NSHashTable *DKActiveManagers(void) {
     return t;
 }
 
-// 主动向所有活动 manager 的 delegate 推送当前伪造位置（改坐标后立即生效）
+// 主动刷新：开关/坐标变化时调用
+// 开 → 推送伪造位置；关 → 重启定位恢复真实
 void DKRefreshAllManagers(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSArray *all = [DKActiveManagers() allObjects];
+        BOOL spoof = DKSpoofEnabled();
         for (CLLocationManager *mgr in all) {
-            if (!DKSpoofEnabled()) break;
-            DKDeliverFakeLocation(mgr);
+            if (spoof) {
+                DKDeliverFakeLocation(mgr);          // 开：立即推送伪造位置
+            } else {
+                [mgr stopUpdatingLocation];          // 关：重启定位，走原生 → 真实
+                [mgr startUpdatingLocation];
+            }
         }
     });
 }
