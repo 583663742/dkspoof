@@ -255,12 +255,13 @@ static void DKApplyCoordinate(double lat, double lon, NSString *name) {
         } else if (ip.row == 1) {
             DKMapPickerVC *vc = [DKMapPickerVC new];
             __weak typeof(self) weakSelf = self;
+            // 地图选点确认后：直接应用坐标 + 可选保存为常用
             vc.onDone = ^(double lat, double lon, NSString *name) {
+                DKApplyCoordinate(lat, lon, name);   // ★ 立即应用（写坐标+开开关+存历史）
                 if (name.length) {
                     DKPlace *p = [DKPlace new];
                     p.name = name; p.lat = lat; p.lon = lon;
-                    // 保存到常用（长按可改名，此处直接存历史）
-                    DKSavePlaceTo(kKeySaved, p);
+                    DKSavePlaceTo(kKeySaved, p);      // 顺便存为常用
                 }
                 [weakSelf reload];
             };
